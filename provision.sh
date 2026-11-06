@@ -78,6 +78,7 @@ payload=$(printf '%s' "$tpl" | jq -c --arg host "$host" --argjson port "$port" -
     protocol: "torrent",
     implementation: .implementation,
     configContract: .configContract,
+    priority: (.priority // 1),
     tags: [],
     fields: [
       .fields[]
