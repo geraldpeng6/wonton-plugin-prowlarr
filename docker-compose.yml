@@ -1,78 +1,92 @@
-# 示例插件：nginx 显示一个网页，向登录的人问好。改成自己的应用见 https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md#写插件。
+# Prowlarr 索引器管理：网页经云吞网关代登录，索引器出网由 network.egress 提供；
+# 配了 torrent_client 能力（qBittorrent Web API）时，一次性服务把它登记成下载客户端。
 services:
-  web:
-    # 镜像按摘要固定（多架构镜像写清单列表的摘要），标签只给人看。
-    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
+  prowlarr:
+    # LinuxServer.io 的 Prowlarr 镜像，上游安装文档指定的镜像（lscr.io/linuxserver/prowlarr 的 Docker Hub 名），
+    # amd64 和 arm64，按清单列表（index）的摘要固定；上游 GPL-3.0-only。
+    image: linuxserver/prowlarr:2.7.0@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf
+    # 镜像以 root 启动再降到 PUID:PGID（LSIO 约定），数据目录由核心按默认交给 PUID:PGID。
     environment:
-      # 网关代登录：SSI 回显的 Remote-User 只信核心带来的。官方镜像启动时对 templates 目录里的
-      # *.template 做 envsubst，把下面的地址换进 nginx 配置（见 web/default.conf.template）。
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      # 认证交给反向代理：应用不再有自己的登录页，网页只经云吞网关进来。
+      # Prowlarr 不认代登录头（External 模式下应用侧零鉴权），保护来自网关会话和插件网络隔离；
+      # 下面的核心地址只供核心检查识别“只信任核心”，应用本身不读它。
       WONTON_CORE_ADDRESS: ${WONTON_CORE_ADDRESS}
-    # 包里的文件经 configs 交给容器（核心在启动前写进去），不能用卷挂载。
-    configs:
-      - source: site
-        target: /etc/nginx/templates/default.conf.template
-      - source: page
-        target: /usr/share/nginx/html/index.html
-      - source: tokens
-        target: /usr/share/nginx/html/tokens.css
+      PROWLARR__AUTH__METHOD: External
+    volumes:
+      - ${WONTON_APP_DATA}/config:/config
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      # /ping 免鉴权，且会真查一次数据库，能发现应用起没起来。
+      test: ["CMD", "curl", "--noproxy", "*", "--fail", "--silent", "--show-error", "http://127.0.0.1:9696/ping"]
       interval: 30s
       timeout: 5s
       start_period: 30s
-      start_interval: 1s
+      start_interval: 2s
+    stop_grace_period: 30s
+
+  # 一次性服务：把 torrent_client 能力（qBittorrent Web API）登记成 Prowlarr 的下载客户端。
+  # 能力核心还没合入：WONTON_TORRENT_CLIENT_URL 没注入时如实说明并跳过，装得上、其他功能照常；
+  # 等能力声明字段定稿后这里改成必填。
+  provision:
+    image: linuxserver/prowlarr:2.7.0@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf
+    entrypoint: ["/bin/sh", "/provision.sh"]
+    environment:
+      WONTON_TORRENT_CLIENT_URL: ${WONTON_TORRENT_CLIENT_URL:-}
+    volumes:
+      - ${WONTON_APP_DATA}/config:/config:ro
+    configs:
+      - source: provision
+        target: /provision.sh
+    depends_on:
+      prowlarr:
+        condition: service_healthy
+    restart: "no"
 
 configs:
-  site:
-    file: web/default.conf.template
-  page:
-    file: web/index.html
-  tokens:
-    file: web/tokens.css
+  provision:
+    file: provision.sh
 
 x-wonton:
-  spec: "0.5"
-  # 换成你自己的：反向域名形式，装上以后不能改。
-  id: app.example.hello
-  version: 0.1.1
+  spec: "0.6"
+  id: com.prowlarr.prowlarr
+  version: 0.1.0
   kind: app
-  title: { zh: 你好, en: Hello }
-  description: { zh: 向登录的人问好的示例网页, en: An example page that greets whoever is signed in }
+  title: { en: Prowlarr }
+  description:
+    zh: 统一管理影视索引器，一处搜索，同步给下载应用
+    en: Manage all your torrent indexers in one place and sync them to your download apps
   icon: icon.svg
   notices: [NOTICE]
-  screenshots: [screenshots/home.png]
-  author: { name: Example }
-  homepage: https://nginx.org
-  # 应用（这里是 nginx）的许可证；插件包自己的许可证写在仓库的 LICENSE 里。
-  license: BSD-2-Clause
+  screenshots: [screenshots/indexers.png, screenshots/add-indexer.png, screenshots/search.png]
+  author: { name: geraldpeng6, url: https://github.com/geraldpeng6 }
+  homepage: https://prowlarr.com
+  # 应用（Prowlarr）的许可证；插件包自己的许可证写在仓库的 LICENSE 里。
+  license: GPL-3.0-only
   tags:
-    zh: [工具]
-    en: [Tools]
+    zh: [下载, 影视, 搜索]
+    en: [Downloads, Video, Search]
   about:
     zh: |
-      一个示例网页：登录以后，页面会向你问好。新建插件时可以照着改。
+      Prowlarr 把你的索引站集中到一处：从内置的几百个定义里添加索引器，测连通性，自动同步给 Radarr、Sonarr、qBittorrent 这类应用，也能直接搜索、把种子抓进下载队列。
+
+      打开就用，不用再登录一次；索引器和设置都保存在家里，重装不丢。搜索索引站需要能访问外网；配了 qBittorrent 插件后，抓取会直接进它的下载队列。
     en: |
-      An example page: once you are signed in, the page says hello. Copy it as a starting point for a new plugin.
-  release_notes: { zh: 名字和说明更新。, en: Product name and description update. }
+      Prowlarr keeps your index sites in one place: add indexers from a few hundred built-in definitions, test them, sync them to Radarr, Sonarr or qBittorrent, and search and grab torrents straight into your download queue.
+
+      Open it and start working, no second login; indexers and settings live at home and survive reinstalls. Searching index sites needs internet access. With the qBittorrent plugin installed, grabs go straight into its download queue.
+  release_notes: { zh: 第一版。, en: First release. }
   webui:
-    service: web
-    port: 80
-    # 示例页回显网关注入的用户名，见 https://github.com/geraldpeng6/wonton-docs/blob/main/plugin-spec.md#网关代登录sso-proxy。
+    service: prowlarr
+    port: 9696
+    # 网关代登录：External 模式下 Prowlarr 不再显示登录页，由网关挡住未登录的访问。
     sso: proxy
     proxy:
       headers:
         Remote-User: "{user}"
-  # 能放到底栏的页面，见 https://github.com/geraldpeng6/wonton-docs/blob/main/plugin-spec.md#底栏页面tabs。放不放由用户决定。
-  tabs:
-    - id: home
-      title: { zh: 主页, en: Home }
-      icon: tabs/home.svg
-      icon_selected: tabs/home-fill.svg
-      path: /
-      # 这个页面没做适配，用默认的 inset：页面夹在 App 的栏中间，不会被挡。
-      # 想让内容从栏下滚过，写 layout: edge-to-edge，并用 --wonton-inset-* 留出栏的位置。
-  permissions: []
-  # 上游 nginx 官方镜像，amd64 和 arm64 都有；上游没写最低内存，按本机空闲实测取整（实测约 24M，取 64M）。
+  permissions:
+    # 抓索引站、拉取索引器定义更新都要出网。
+    - network.egress
   requirements:
     arch: [amd64, arm64]
-    memory: 64M

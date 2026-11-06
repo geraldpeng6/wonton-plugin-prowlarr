@@ -1,17 +1,87 @@
 # shellcheck shell=bash
-# scripts/smoke.sh 的一项一项探测，跟着插件走。没写的项会 FAIL 并给出写法，不会默认放行。
-#
-# 页面：web_assert 从标准输入读页面，命中的确是应用的真实页面时返回 0。
-# 身份：identity_check 用应用自己的“当前用户”接口断言认出的是用户管理员。没有用户体系时写 IDENTITY_NA=1，
-#       并在 SMOKE_NOTE 里写原因。dweb / web_get 是带用户会话的请求助手，可继续走应用自己的登录链。
-# 工具：MCP_TOOL 写一个只读工具名（可带插件前缀），MCP_ARGS 是 JSON 参数；mcp_assert 从标准输入读调用结果。
-#       要断言多个工具时改成写 mcp_check；调用前要备数据时写 before_mcp。
-# 装之前要准备（如先配出口代理）：写 before_install。
+# scripts/smoke.sh 与 e2e/smoke.sh 共用的插件探针。
+# Prowlarr：sso=proxy；External 模式下应用侧零鉴权、没有用户体系，主人身份由云吞网关保证。
+# API 要 X-Api-Key：从容器里的 /config/config.xml 读。
+export IDENTITY_NA=1
+export SMOKE_NOTE="Prowlarr 是单用户应用（External 模式无应用侧登录页）；没有可断言的用户身份接口，免二次登录由云吞网关会话保证。"
 
-web_assert() { grep -q '你好'; }   # 示例页的标题
+web_assert() { grep -qi 'prowlarr'; }   # 标准输入：SPA 首页 HTML 含应用名
 
-identity_check() { # 页面回显的就是网关注入的用户名
-  local page
-  page="$(dweb /)" || { echo "页面失败：$page"; return 1; }
-  grep -qF "你好，$SMOKE_OWNER" <<<"$page" || { echo "页面没回显用户 $SMOKE_OWNER：$(head -c 120 <<<"$page")"; return 1; }
+probe_env() {
+  echo "${E2E_INSTANCE:-${SMOKE_INSTANCE:-}}"
+}
+
+probe_slug() {
+  echo "${E2E_SLUG:-${SMOKE_SLUG:-}}"
+}
+
+prowlarr_container() {
+  printf 'wonton-%s--%s--prowlarr' "$(probe_env)" "$(probe_slug)"
+}
+
+prowlarr_key() { # 容器里 config.xml 的 ApiKey
+  local key
+  key="$(docker exec "$(prowlarr_container)" sh -c \
+    "sed -n 's:.*<ApiKey>\\(.*\\)</ApiKey>.*:\\1:p' /config/config.xml" 2>/dev/null)"
+  [[ -n "$key" ]] || { echo "容器里读不到 ApiKey"; return 1; }
+  printf '%s' "$key"
+}
+
+prowlarr_api() { # <方法> <路径> [请求体]：容器内直调应用 API，带 X-Api-Key
+  local method="$1" path="$2" body="${3:-}" key cid
+  cid="$(prowlarr_container)" || return 1
+  key="$(prowlarr_key)" || return 1
+  local -a args=(--noproxy '*' -fsS -X "$method" -H "X-Api-Key: $key")
+  [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' -d "$body")
+  docker exec "$cid" curl "${args[@]}" "http://127.0.0.1:9696/api/v1/$path"
+}
+
+prowlarr_api_ready() { # 等 API 就绪，就绪后把 GET /indexer 的结果打到标准输出
+  local out
+  for _ in $(seq 1 20); do
+    if out="$(prowlarr_api GET indexer)"; then
+      printf '%s' "$out"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "Prowlarr 的 API 一直没就绪"
+  return 1
+}
+
+SMOKE_INDEXER="wonton-smoke"
+
+data_write() { # 登记一个公开免凭据的索引器（TorrentsCSV），作为要保住的用户数据
+  local list tpl payload created id
+  list="$(prowlarr_api_ready)" || return 1
+  # 幂等：先删掉上次留下的同名索引器，再登记一个新的。
+  local old
+  old="$(jq -r --arg n "$SMOKE_INDEXER" '[.[] | select(.name == $n)][0].id // empty' <<<"$list")"
+  if [[ -n "$old" ]]; then
+    prowlarr_api DELETE "indexer/$old" >/dev/null || { echo "删旧索引器失败（id=$old）"; return 1; }
+  fi
+  tpl="$(prowlarr_api GET indexer/schema | jq -c '[.[] | select(.implementation == "TorrentsCSV")][0] // empty')" ||
+    { echo "读 indexer schema 失败"; return 1; }
+  [[ -n "$tpl" ]] || { echo "schema 里没有 TorrentsCSV 实现"; return 1; }
+  payload="$(jq -c --arg n "$SMOKE_INDEXER" '
+    {name: $n, enable: true, protocol: "torrent", implementation: .implementation,
+     configContract: .configContract, tags: [],
+     fields: [.fields[]
+              | if .name == "baseUrl" and ((.value // "") == "") then .value = .selectOptions[0].value
+                else . end]}' <<<"$tpl")" ||
+    { echo "组装索引器请求失败"; return 1; }
+  created="$(prowlarr_api POST indexer "$payload")" || { echo "登记索引器失败"; return 1; }
+  id="$(jq -r '.id // empty' <<<"$created")"
+  [[ -n "$id" ]] || { echo "登记后读不到 id：$(head -c 200 <<<"$created")"; return 1; }
+  echo "已登记索引器 $SMOKE_INDEXER（id=$id，TorrentsCSV）"
+}
+
+data_check() { # 升级/重装后：索引器还在，还是登记时的实现
+  local list item
+  list="$(prowlarr_api_ready)" || return 1
+  item="$(jq -c --arg n "$SMOKE_INDEXER" '[.[] | select(.name == $n)][0] // empty' <<<"$list")"
+  [[ -n "$item" ]] || { echo "索引器 $SMOKE_INDEXER 不见了：$(head -c 200 <<<"$list")"; return 1; }
+  jq -e '.implementation == "TorrentsCSV" and .enable == true' <<<"$item" >/dev/null ||
+    { echo "索引器被改动：$item"; return 1; }
+  echo "索引器 $SMOKE_INDEXER 还在（$(jq -r '.implementation' <<<"$item")）"
 }
