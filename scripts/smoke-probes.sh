@@ -65,7 +65,8 @@ data_write() { # 登记一个公开免凭据的索引器（TorrentsCSV），作�
   [[ -n "$tpl" ]] || { echo "schema 里没有 TorrentsCSV 实现"; return 1; }
   payload="$(jq -c --arg n "$SMOKE_INDEXER" '
     {name: $n, enable: true, protocol: "torrent", implementation: .implementation,
-     configContract: .configContract, tags: [],
+     configContract: .configContract, appProfileId: (if ((.appProfileId // 0) > 0) then .appProfileId else 1 end),
+     tags: [],
      fields: [.fields[]
               | if .name == "baseUrl" and ((.value // "") == "") then .value = .selectOptions[0].value
                 else . end]}' <<<"$tpl")" ||
