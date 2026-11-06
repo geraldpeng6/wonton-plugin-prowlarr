@@ -63,9 +63,12 @@ data_write() { # 登记一个公开免凭据的索引器（TorrentsCSV），作�
   tpl="$(prowlarr_api GET indexer/schema | jq -c '[.[] | select(.implementation == "TorrentsCSV")][0] // empty')" ||
     { echo "读 indexer schema 失败"; return 1; }
   [[ -n "$tpl" ]] || { echo "schema 里没有 TorrentsCSV 实现"; return 1; }
+  # enable=true 的创建和更新都会触发应用的连通测试，依赖测试机器到索引站的网络（与插件无关）；
+  # 先 disable 创建，再 forceSave 启用，登记本身不碰网。
   payload="$(jq -c --arg n "$SMOKE_INDEXER" '
-    {name: $n, enable: true, protocol: "torrent", implementation: .implementation,
-     configContract: .configContract, appProfileId: (if ((.appProfileId // 0) > 0) then .appProfileId else 1 end),
+    {name: $n, enable: false, protocol: "torrent", implementation: .implementation,
+     configContract: .configContract, priority: (.priority // 1),
+     appProfileId: (if ((.appProfileId // 0) > 0) then .appProfileId else 1 end),
      tags: [],
      fields: [.fields[]
               | if .name == "baseUrl" and ((.value // "") == "") then .value = .selectOptions[0].value
@@ -74,7 +77,9 @@ data_write() { # 登记一个公开免凭据的索引器（TorrentsCSV），作�
   created="$(prowlarr_api POST indexer "$payload")" || { echo "登记索引器失败"; return 1; }
   id="$(jq -r '.id // empty' <<<"$created")"
   [[ -n "$id" ]] || { echo "登记后读不到 id：$(head -c 200 <<<"$created")"; return 1; }
-  echo "已登记索引器 $SMOKE_INDEXER（id=$id，TorrentsCSV）"
+  enabled="$(jq -c --argjson id "$id" '.id = $id | .enable = true' <<<"$payload")"
+  prowlarr_api PUT "indexer?forceSave=true" "$enabled" >/dev/null || { echo "启用索引器失败（id=$id）"; return 1; }
+  echo "已登记索引器 $SMOKE_INDEXER（id=$id，TorrentsCSV，已启用）"
 }
 
 data_check() { # 升级/重装后：索引器还在，还是登记时的实现
