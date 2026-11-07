@@ -4,7 +4,7 @@
 
 云吞（Wonton）的 Prowlarr 插件：把影视索引器集中到一处管理，测连通性、自动同步给 Radarr、Sonarr 这类应用，也能直接搜索并把种子抓进下载队列。
 
-这个插件使用上游安装文档指定的 [LinuxServer.io 镜像](https://docs.linuxserver.io/images/docker-prowlarr/)（Docker Hub 名 `linuxserver/prowlarr`，amd64 和 arm64），按清单列表摘要固定。网页经云吞网关访问：Prowlarr 以 `External` 认证模式运行，应用侧不再有登录页，只打得开网关后面的用户才进得来。
+这个插件使用上游安装文档指定的 [LinuxServer.io 镜像](https://docs.linuxserver.io/images/docker-prowlarr/)（Docker Hub 名 `linuxserver/prowlarr`，amd64 和 arm64），按清单列表摘要固定。网页经云吞网关访问：第一次打开时，应用会要求设置管理员账号和密码（Forms 认证，*arr 的"启用认证"页，用户名密码自己定），之后网页在云吞网关和应用的两层登录后面。
 
 ## qBittorrent 下载客户端
 
@@ -21,9 +21,9 @@ scripts/dev.sh up
 scripts/dev.sh install
 ```
 
-`up` 在本机起一套云吞，打印它的地址。浏览器打开，用 `scripts/dev.sh token` 输出的用户令牌登录。`install` 先列出插件要的权限，确认后装上，打印 Prowlarr 网页的地址。打开就是索引器列表，不用再登录一次。
+`up` 在本机起一套云吞，打印它的地址。浏览器打开，用 `scripts/dev.sh token` 输出的用户令牌登录。`install` 先列出插件要的权限，确认后装上，打印 Prowlarr 网页的地址。第一次打开 Prowlarr 会出现"启用认证"页：设置用户名和密码（自己定），提交后就用这套账号登录应用。
 
-搜索和抓取需要能访问外网；索引器和设置保存在插件数据目录，重装不丢。
+搜索和抓取需要能访问外网；索引器和设置保存在插件数据目录，重装不丢（认证设置也在里面）。
 
 Chrome、Firefox 和 curl 把 `*.localhost` 直接解析到本机，不用改 hosts。
 
