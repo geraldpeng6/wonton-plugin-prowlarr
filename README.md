@@ -1,31 +1,44 @@
-# 云吞插件模板
+# 云吞插件：Prowlarr
 
 开发流程见[插件开发指南](https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md)。
 
-这是一个能安装的示例插件 `app.example.hello`：使用 nginx 官方镜像显示问候页，经网关的 `sso: proxy` 注入用户名，页面显示“你好，<用户名>”。示例没有应用账号、持久化数据或 MCP 工具。
+云吞（Wonton）的 Prowlarr 插件：把影视索引器集中到一处管理，测连通性、自动同步给 Radarr、Sonarr 这类应用，也能直接搜索并把种子抓进下载队列。
 
-## 示例文件
+这个插件使用上游安装文档指定的 [LinuxServer.io 镜像](https://docs.linuxserver.io/images/docker-prowlarr/)（Docker Hub 名 `linuxserver/prowlarr`，amd64 和 arm64），按清单列表摘要固定。网页经云吞网关访问：第一次打开时，应用会要求设置管理员账号和密码（Forms 认证，*arr 的"启用认证"页，用户名密码自己定），之后网页在云吞网关和应用的两层登录后面。
+
+## qBittorrent 下载客户端
+
+装了 qBittorrent 插件并在云吞里把 `torrent_client` 能力指向它时，插件会把 qBittorrent（Web API v2）登记成 Prowlarr 的下载客户端，地址读自 `WONTON_TORRENT_CLIENT_URL`，免凭据；已手动配过 qBittorrent 的不会被改动。能力还没接线时跳过这一步，其他功能照常。
+
+## 图标来源与许可
+
+`icon.svg` 使用 Prowlarr 官方标志；来源、处理方式、许可证全文和商标说明见 [NOTICE](NOTICE)。
+
+## 先跑起来
+
+```bash
+scripts/dev.sh up
+scripts/dev.sh install
+```
+
+`up` 在本机起一套云吞，打印它的地址。浏览器打开，用 `scripts/dev.sh token` 输出的用户令牌登录。`install` 先列出插件要的权限，确认后装上，打印 Prowlarr 网页的地址。第一次打开 Prowlarr 会出现"启用认证"页：设置用户名和密码（自己定），提交后就用这套账号登录应用。
+
+搜索和抓取需要能访问外网；索引器和设置保存在插件数据目录，重装不丢（认证设置也在里面）。
+
+Chrome、Firefox 和 curl 把 `*.localhost` 直接解析到本机，不用改 hosts。
+
+## 仓库里有什么
 
 | 路径 | 内容 |
 | --- | --- |
-| `docker-compose.yml` | 示例清单、nginx 服务和三个 `configs` |
-| `web/default.conf.template` | nginx 配置，启用 SSI 回显用户名并提供健康检查入口；只放行来自核心地址（`${WONTON_CORE_ADDRESS}`）的请求，其余来源 403 |
-| `web/index.html` | 问候页 |
-| `web/tokens.css` | 页面主题变量的后备值 |
-| `tabs/` | 示例主页的底栏图标 |
-| `screenshots/home.png` | 商店详情页的示例截图 |
-| `scripts/smoke-probes.sh` | 检查真实页面和网关注入身份的插件探针 |
-
-从模板创建自己的插件后，替换示例清单、网页和素材；具体步骤见[写插件](https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md#写插件)。
-
-## 更新开发套件
-
-```bash
-scripts/dev.sh kit-update
-```
-
-在从模板新建的插件仓库中更新套件；本仓库是套件源头，执行时只提示并退出。版本、可选引用和自定义脚本约定见[开发指南](https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md#更新开发套件)。
-
-## 图标
-
-`icon.svg` 是本仓库原创线条图标，按本仓库 MIT 许可证分发，见 [NOTICE](NOTICE)。
+| `docker-compose.yml` | 插件本身：Compose 加上 `x-wonton` 清单 |
+| `provision.sh` | 一次性服务：把 torrent_client 能力登记成下载客户端 |
+| `icon.svg`、`NOTICE` | 官方图标和它的许可声明 |
+| `screenshots/` | 商店详情页里的截图 |
+| `scripts/check.sh` | 检查插件包，规则和安装时一样 |
+| `scripts/dev.sh` | 开发环境：起一套云吞，装、重装、卸载插件，看日志 |
+| `scripts/smoke-probes.sh` | 冒烟对这个插件逐项的探测 |
+| `scripts/publish.sh` | 发布一个版本：打 tag、推送 |
+| `AGENTS.md` | 给人和 AI 编程代理的规则 |
+| `LICENSE`、`NOTICE` | 插件包许可证、上游许可证和商标声明 |
+| `.wonton/` | 开发环境的设置、密钥和数据，不提交 |
