@@ -10,6 +10,10 @@
 
 装了 qBittorrent 插件并在云吞里把 `torrent_client` 能力指向它时，插件会把 qBittorrent（Web API v2）登记成 Prowlarr 的下载客户端，地址读自 `WONTON_TORRENT_CLIENT_URL`，免凭据；已手动配过 qBittorrent 的不会被改动。能力还没接线时跳过这一步，其他功能照常。
 
+## 通知邮件
+
+装好插件时，插件在应用的 设置 → Connect 里建一个 "Wonton" 的 Email 通知连接：服务器是云吞的内部邮箱（不认证、不加密），收件人是主人的内部邮箱。健康问题、健康恢复、应用更新三类通知默认打开，出现在收件人的 Wonton 私聊里；每次抓取发一封的信默认不发（量太大），要收在连接设置里打开"抓取"。信进不了外面的邮箱：把收件地址改成外部邮箱，云吞会拒收，应用报发送失败。已手动配过 Email 连接的不会被改动。
+
 ## 图标来源与许可
 
 `icon.svg` 使用 Prowlarr 官方标志；来源、处理方式、许可证全文和商标说明见 [NOTICE](NOTICE)。
@@ -33,6 +37,7 @@ Chrome、Firefox 和 curl 把 `*.localhost` 直接解析到本机，不用改 ho
 | --- | --- |
 | `docker-compose.yml` | 插件本身：Compose 加上 `x-wonton` 清单 |
 | `provision.sh` | 一次性服务：把 torrent_client 能力登记成下载客户端 |
+| `mail.sh` | 一次性服务：把应用的通知邮件接到云吞的内部邮箱 |
 | `icon.svg`、`NOTICE` | 官方图标和它的许可声明 |
 | `screenshots/` | 商店详情页里的截图 |
 | `scripts/check.sh` | 检查插件包，规则和安装时一样 |

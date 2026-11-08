@@ -1,5 +1,6 @@
 # Prowlarr 索引器管理：网页经云吞网关访问（sso: none），索引器出网由 network.egress 提供；
-# 配了 torrent_client 能力（qBittorrent Web API）时，一次性服务把它登记成下载客户端。
+# 配了 torrent_client 能力（qBittorrent Web API）时，一次性服务把它登记成下载客户端；
+# 一次性服务还把 Email 通知接到核心的内部邮箱（notify），应用发的信转进收件人的 Wonton 私聊。
 services:
   prowlarr:
     # LinuxServer.io 的 Prowlarr 镜像，上游安装文档指定的镜像（lscr.io/linuxserver/prowlarr 的 Docker Hub 名），
@@ -41,14 +42,36 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # 一次性服务：把 Email 通知接到核心的内部邮箱，收件人是主人的内部邮箱，信转进收件人的 Wonton 私聊。
+  mail:
+    image: linuxserver/prowlarr:2.7.0@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf
+    entrypoint: ["/bin/sh", "/mail.sh"]
+    environment:
+      # 缺了就装不上：notify 没给 SMTP 三件套、owner.identity 没给收件地址，都要如实报错。
+      WONTON_SMTP_HOST: ${WONTON_SMTP_HOST:?}
+      WONTON_SMTP_PORT: ${WONTON_SMTP_PORT:?}
+      WONTON_MAIL_FROM: ${WONTON_MAIL_FROM:?}
+      WONTON_OWNER_EMAIL: ${WONTON_OWNER_EMAIL:?}
+    volumes:
+      - ${WONTON_APP_DATA}/config:/config:ro
+    configs:
+      - source: mail
+        target: /mail.sh
+    depends_on:
+      prowlarr:
+        condition: service_healthy
+    restart: "no"
+
 configs:
   provision:
     file: provision.sh
+  mail:
+    file: mail.sh
 
 x-wonton:
-  spec: "0.6"
+  spec: "0.11"
   id: com.prowlarr.prowlarr
-  version: 0.1.0
+  version: 0.2.0
   kind: app
   title: { en: Prowlarr }
   description:
@@ -68,17 +91,23 @@ x-wonton:
     zh: |
       Prowlarr 把你的索引站集中到一处：从内置的几百个定义里添加索引器，测连通性，自动同步给 Radarr、Sonarr、qBittorrent 这类应用，也能直接搜索、把种子抓进下载队列。
 
-      第一次打开时应用会要求设置管理员账号和密码（自己定，之后在应用的 设置 → 通用 → 安全 里改）；网页始终在云吞网关的登录后面。索引器和设置都保存在家里，重装不丢。搜索索引站需要能访问外网；配了 qBittorrent 插件后，抓取会直接进它的下载队列。
+      第一次打开时应用会要求设置管理员账号和密码（自己定，之后在应用的 设置 → 通用 → 安全 里改）；网页始终在云吞网关的登录后面。索引器和设置都保存在家里，重装不丢。搜索索引站需要能访问外网；配了 qBittorrent 插件后，抓取会直接进它的下载队列。应用的通知（健康问题、健康恢复、应用更新）出现在收件人的 Wonton 私聊里；收件人只能是家里人，改成外部邮箱会发送失败。
     en: |
       Prowlarr keeps your index sites in one place: add indexers from a few hundred built-in definitions, test them, sync them to Radarr, Sonarr or qBittorrent, and search and grab torrents straight into your download queue.
 
-      On first open the app asks you to set an admin username and password (your choice, change later under Settings → General → Security); the web stays behind the Wonton gateway login. Indexers and settings live at home and survive reinstalls. Searching index sites needs internet access. With the qBittorrent plugin installed, grabs go straight into its download queue.
-  release_notes: { zh: 第一版。, en: First release. }
+      On first open the app asks you to set an admin username and password (your choice, change later under Settings → General → Security); the web stays behind the Wonton gateway login. Indexers and settings live at home and survive reinstalls. Searching index sites needs internet access. With the qBittorrent plugin installed, grabs go straight into its download queue. App notifications (health issues, health restored, app updates) land in the recipient's Wonton chat; recipients must be household members — sending to an external address fails.
+  release_notes:
+    zh: 应用发的通知接上了云吞的内部邮箱：装好即建好 Email 通知连接，健康问题、健康恢复、应用更新出现在收件人的 Wonton 私聊里；要收每次抓取的信，在连接设置里打开"抓取"。
+    en: "App notifications now go through Wonton's internal mailbox: an Email connection is set up on install, and health-issue, health-restored and app-update notices land in the recipient's Wonton chat. Turn on \"Grab\" in the connection settings to also get one mail per grab."
   webui:
     service: prowlarr
     port: 9696
   permissions:
     # 抓索引站、拉取索引器定义更新都要出网。
     - network.egress
+    # 应用发的信经核心的内部 SMTP 转进收件人的 Wonton 私聊。
+    - notify
+    # 通知的收件地址用主人的内部邮箱（WONTON_OWNER_EMAIL）。
+    - owner.identity
   requirements:
     arch: [amd64, arm64]
