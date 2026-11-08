@@ -1,6 +1,8 @@
 #!/bin/sh
 # 把 Email 通知接到核心的内部邮箱：装好就有，应用发的信转进收件人的 Wonton 私聊。
 # 每次创建容器都会重跑，必须幂等：已有 Email 通知时不改用户配置。
+# 建连接不做发信测试（?forceSave=true），测试信单独发一次、结果只记日志：
+# 核心 SMTP 启动时抖一下不该让安装/升级失败，邮件是顺手的功能；连接本身建不了（API 报错）才失败。
 set -eu
 
 api="http://prowlarr:9696/api/v1"
@@ -50,8 +52,9 @@ if [ -z "$tpl" ] || [ "$tpl" = null ]; then echo "通知 schema 里没有 Email 
 
 # 字段名和默认值都取自 schema，不自己拼。加密显式关成 Never（枚举 2）：核心的 SMTP 不加密，
 # 默认的 Preferred 会在明文 25 端口上尝试升级；用户名密码留空，应用就不发 AUTH。
-# 收件人是主人的内部邮箱；健康问题、健康恢复、应用更新默认开，抓取信默认不开（每抓一次发一封，量太大），
-# 要收在连接设置里打开"抓取"。
+# 收件人是主人的内部邮箱。触发器先全关着创建（Enable=false 时应用既不测连通也不校验字段，
+# 创建这步只落存储），再用 ?forceSave=true 打开健康问题、健康恢复、应用更新：更新路径只在
+# 没带 forceSave 时才发测试信，开发收信端没就绪也不会拖垮安装。抓取信默认不开（每抓一次发一封）。
 payload=$(printf '%s' "$tpl" | jq -c --arg host "$host" --argjson port "$port" --arg from "$from" --arg to "$owner" '
   {
     name: "Wonton",
@@ -59,9 +62,9 @@ payload=$(printf '%s' "$tpl" | jq -c --arg host "$host" --argjson port "$port" -
     configContract: .configContract,
     tags: [],
     onGrab: false,
-    onHealthIssue: true,
-    onHealthRestored: true,
-    onApplicationUpdate: true,
+    onHealthIssue: false,
+    onHealthRestored: false,
+    onApplicationUpdate: false,
     fields: [
       .fields[]
       | if .name == "server" then .value = $host
@@ -73,13 +76,12 @@ payload=$(printf '%s' "$tpl" | jq -c --arg host "$host" --argjson port "$port" -
     ]
   }')
 
-# 健康类触发器开着，应用会先发一封测试信、通过才创建：登记成功即发信通路证明。
-# 发不出去时带重试，重试满了带着应用的报错退出。
+# 创建连接：应用报错（字段非法、重名）时带重试，重试满了带着应用的报错让安装失败。
 code=""
 i=0
 while :; do
   code=$(curl --noproxy '*' -sS -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
-    -d "$payload" -o /tmp/mail-created.json -w '%{http_code}' "$api/notification" || true)
+    -d "$payload" -o /tmp/mail-created.json -w '%{http_code}' "$api/notification?forceSave=true" || true)
   case "$code" in
     200 | 201) break ;;
   esac
@@ -96,4 +98,30 @@ id=$(jq -r '.id' /tmp/mail-created.json)
 case "$id" in
   ''|null) echo "创建后读不到 id：$(cat /tmp/mail-created.json)"; exit 1 ;;
 esac
-echo "已登记 Email 通知并发了测试信（id=$id）：$from -> $owner 经 $host:$port 明文不认证"
+
+# 打开触发器：?forceSave=true 让应用只校验字段、不发测试信。
+enabled=$(jq -c --argjson id "$id" '.id = $id | .onHealthIssue = true | .onHealthRestored = true | .onApplicationUpdate = true' /tmp/mail-created.json)
+code=""
+i=0
+while :; do
+  code=$(curl --noproxy '*' -sS -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+    -X PUT -d "$enabled" -o /tmp/mail-enabled.json -w '%{http_code}' "$api/notification?forceSave=true" || true)
+  case "$code" in
+    200 | 202) break ;;
+  esac
+  i=$((i + 1))
+  [ "$i" -lt 3 ] || {
+    echo "打开 Email 通知触发器失败（HTTP $code），应用返回："
+    cat /tmp/mail-enabled.json 2>/dev/null || true
+    exit 1
+  }
+  sleep 5
+done
+
+# 测试信只发一次、只记日志：发不出去（比如核心 SMTP 还没就绪）不影响安装，之后的信照常发。
+code=$(curl --noproxy '*' -sS -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+  -d "$enabled" -o /tmp/mail-test.json -w '%{http_code}' "$api/notification/test" || true)
+case "$code" in
+  200) echo "已登记 Email 通知（id=$id）：$from -> $owner 经 $host:$port 明文不认证；测试信发出成功" ;;
+  *)   echo "已登记 Email 通知（id=$id）：$from -> $owner 经 $host:$port 明文不认证；测试信没发出去（HTTP $code：$(head -c 200 /tmp/mail-test.json 2>/dev/null || true)），连接已建好，之后的信照常发" ;;
+esac
