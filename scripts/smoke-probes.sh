@@ -182,7 +182,13 @@ extra_check() { # 发信端到端：应用的「测试」接口真发一封通�
 	local list conn resp to wp
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
 	# 插件的一次性 mail 服务建好的 "Wonton" Email 通知连接还在：没有它就没有发信通路。
-	list="$(prowlarr_api GET notification)" || { echo "读通知连接失败"; return 1; }
+	# 提取通知连接（应用冷启动的头几秒 API 可能先 401，照 data_write 的就绪模式重试）。
+	local tries
+	for tries in 1 2 3 4 5; do
+		list="$(prowlarr_api GET notification)" && break
+		[[ "$tries" == 5 ]] && { echo "读通知连接失败：$(head -c 200 <<<"$list")"; return 1; }
+		sleep 3
+	done
 	conn="$(jq -c '[.[] | select(.implementation == "Email")][0] // empty' <<<"$list")"
 	[[ -n "$conn" && "$conn" != null ]] || { echo "通知连接里没有 Email 实现（插件的 mail 服务没建好？）"; return 1; }
 	jq -e --arg h "smtp.wonton.internal" '[.fields[] | select(.name == "server")][0].value == $h' \
