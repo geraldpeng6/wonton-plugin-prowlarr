@@ -68,7 +68,7 @@ prowlarr_api() { # <方法> <路径> [请求体]：经网关调应用 API，带 
 prowlarr_session() { # 自铸核心会话：网关认出用户才转发 sso:none 应用的请求。e2e 的 extra_check 和
   # 升级保数据的 data_write 都跑在套件 web_login 之前，jar 里还没有核心会话，先用主人令牌换一个
   # （同 qbittorrent 探针的 qbit_session；来源白名单只免主人的浏览器，不免这里的程序化请求）。
-  local jar token base
+  local web jar token base
   jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
   token="${E2E_TOKEN:-${SMOKE_TOKEN:-}}"
   base="${E2E_BASE:-${SMOKE_BASE:-}}"
@@ -76,6 +76,10 @@ prowlarr_session() { # 自铸核心会话：网关认出用户才转发 sso:none
   curl -sS --noproxy '*' -o /dev/null -c "$jar" \
     --data-urlencode "token=$token" "$base/_wonton/login" ||
     { echo "主人令牌登录不了核心"; return 1; }
+  # 第二步：跟首页跳转，让网关给这个应用子域名发会话 Cookie（只铸核心会话不够）。
+  curl -fsS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" \
+    -H 'Accept: text/html' "$web/" ||
+    { echo "应用网页会话没建立"; return 1; }
 }
 
 prowlarr_api_ready() { # 等 API 就绪，就绪后把 GET /indexer 的结果打到标准输出
