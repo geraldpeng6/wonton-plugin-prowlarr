@@ -65,8 +65,22 @@ prowlarr_api() { # <方法> <路径> [请求体]：经网关调应用 API，带 
   web_get "/api/v1/$path" "${args[@]}"
 }
 
+prowlarr_session() { # 自铸核心会话：网关认出用户才转发 sso:none 应用的请求。e2e 的 extra_check 和
+  # 升级保数据的 data_write 都跑在套件 web_login 之前，jar 里还没有核心会话，先用主人令牌换一个
+  # （同 qbittorrent 探针的 qbit_session；来源白名单只免主人的浏览器，不免这里的程序化请求）。
+  local jar token base
+  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  token="${E2E_TOKEN:-${SMOKE_TOKEN:-}}"
+  base="${E2E_BASE:-${SMOKE_BASE:-}}"
+  [[ -n "$token" && -n "$base" ]] || { echo "没有核心登录变量，铸不了核心会话"; return 1; }
+  curl -sS --noproxy '*' -o /dev/null -c "$jar" \
+    --data-urlencode "token=$token" "$base/_wonton/login" ||
+    { echo "主人令牌登录不了核心"; return 1; }
+}
+
 prowlarr_api_ready() { # 等 API 就绪，就绪后把 GET /indexer 的结果打到标准输出
   local out
+  prowlarr_session || return 1
   for _ in $(seq 1 20); do
     if out="$(prowlarr_api GET indexer)"; then
       printf '%s' "$out"
@@ -181,6 +195,7 @@ extra_check() { # 发信端到端：应用的「测试」接口真发一封通�
 	# 核心把它投进主人的「Wonton」私聊（直接读通知房的消息，投递的最终证据）。
 	local list conn resp to wp
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
+	prowlarr_session || return 1
 	# 插件的一次性 mail 服务建好的 "Wonton" Email 通知连接还在：没有它就没有发信通路。
 	# 提取通知连接（应用冷启动的头几秒 API 可能先 401，照 data_write 的就绪模式重试）。
 	local tries
