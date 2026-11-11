@@ -69,6 +69,8 @@ prowlarr_session() { # 自铸核心会话：网关认出用户才转发 sso:none
   # 升级保数据的 data_write 都跑在套件 web_login 之前，jar 里还没有核心会话，先用主人令牌换一个
   # （同 qbittorrent 探针的 qbit_session；来源白名单只免主人的浏览器，不免这里的程序化请求）。
   local web jar token base
+  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  web="${web%/}"
   jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
   token="${E2E_TOKEN:-${SMOKE_TOKEN:-}}"
   base="${E2E_BASE:-${SMOKE_BASE:-}}"
