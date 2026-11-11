@@ -164,51 +164,22 @@ pw_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 prob
 	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
 }
 
-pw_room_query() { # 用主人令牌读「Wonton」通知房最近消息（信被核心投进私聊的最终证据）。
-	# 主人令牌照核心自己的做法：管理令牌走 Tuwunel 的 impersonation 登录；都在核心容器里拿。
-	local core dd room admin srv otok
+pw_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
+	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
+	# 测试信没有随机的标记，文字用插件前缀；冒烟里 extra_check 是唯一发信方，开始后出现即可认。
+	local core dd dir
 	core="$(pw_core)" || return 1
 	dd="$(pw_dd)"
-	room="$(docker exec "$core" cat "$dd/core/matrix-notice-room")" ||
-		{ echo "读不到通知房记录（$dd/core/matrix-notice-room）"; return 1; }
-	admin="$(docker exec "$core" cat "$dd/core/matrix-admin-token")" ||
-		{ echo "读不到 Matrix 管理令牌"; return 1; }
-	srv="$(docker exec "$core" cat "$dd/../secrets/matrix-server-name")" ||
-		{ echo "读不到 Matrix 服务器名"; return 1; }
-	otok="$(docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
-		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $admin" -H 'Content-Type: application/json' -d '{}' \
-		"http://tuwunel.wonton.internal:8008/_synapse/admin/v1/users/@owner:$srv/login" | jq -er .access_token)" ||
-		{ echo "拿不到主人的 Matrix 令牌"; return 1; }
-	docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
-		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $otok" \
-		"http://tuwunel.wonton.internal:8008/_matrix/client/v3/rooms/$room/messages?dir=b&limit=20"
-}
-
-pw_room_newest_ts() { # <前缀>：通知房里该插件最近一条邮件消息的 origin_server_ts（没有则 0）
-	local out
-	out="$(pw_room_query)" || { echo 0; return 0; }
-	jq -r --arg p "$1" '[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p))) | .origin_server_ts] | max // 0' <<<"$out" 2>/dev/null || echo 0
-}
-
-pw_room_wait() { # <前缀> <标记> <起始 ts> [次数=40]：等通知房里出现这条插件发的新邮件消息（投进私聊后一直都在）
-	local prefix="$1" marker="$2" since="$3" n="${4:-40}" i out hits
-	for ((i = 0; i < n; i++)); do
-		out="$(pw_room_query)" || { sleep 2; continue; }
-		hits="$(jq -r --arg p "$prefix" --arg m "$marker" --argjson s "$since" '
-			[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p)) and .origin_server_ts > $s)
-			 | select($m == "" or (.content.body | contains($m)))] | length' <<<"$out" 2>/dev/null || echo 0)"
-		[[ "${hits:-0}" -ge 1 ]] && return 0
-		sleep 2
-	done
-	return 1
+	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
+		bash -c 'source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
+		_ "$dir" "$1" "$2"
 }
 
 extra_check() { # 发信端到端：应用的「测试」接口真发一封通知信（装插件时 mail 已建好 Wonton 连接），
 	# 核心把它投进主人的「Wonton」私聊（直接读通知房的消息，投递的最终证据）。
-	local list conn resp to before
+	local list conn resp to wp
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
-	# 记下触发前该插件最近一封邮件消息的时间，之后只认更新的。
-	before="$(pw_room_newest_ts "Prowlarr：")"
 	# 插件的一次性 mail 服务建好的 "Wonton" Email 通知连接还在：没有它就没有发信通路。
 	list="$(prowlarr_api GET notification)" || { echo "读通知连接失败"; return 1; }
 	conn="$(jq -c '[.[] | select(.implementation == "Email")][0] // empty' <<<"$list")"
@@ -216,11 +187,12 @@ extra_check() { # 发信端到端：应用的「测试」接口真发一封通�
 	jq -e --arg h "smtp.wonton.internal" '[.fields[] | select(.name == "server")][0].value == $h' \
 		<<<"$conn" >/dev/null 2>&1 ||
 		echo "（提示）Email 连接的 server 不是 smtp.wonton.internal：$(jq -c '[.fields[] | select(.name == "server" or .name == "to")]' <<<"$conn")"
+	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
+	pw_room_wait 120 "Prowlarr：" & wp=$!
 	# 触发一封真实测试信：应用用它自己配好的 SMTP（内部邮箱）发给收件人。
 	resp="$(prowlarr_api POST notification/test "$conn")" ||
-		{ echo "测试信请求失败：$(head -c 200 <<<"$resp")"; return 1; }
+		{ kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "测试信请求失败：$(head -c 200 <<<"$resp")"; return 1; }
 	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
-	pw_room_wait "Prowlarr：" "" "$before" 40 ||
-		{ echo "测试信 80 秒没出现在主人的 Wonton 私聊：$(pw_room_query | head -c 300)"; return 1; }
+	wait "$wp" || { echo "测试信 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
 	echo "测试信已进主人的 Wonton 私聊（Prowlarr：…，收件人 $to）"
 }
