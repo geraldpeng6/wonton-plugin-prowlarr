@@ -65,8 +65,28 @@ prowlarr_api() { # <方法> <路径> [请求体]：经网关调应用 API，带 
   web_get "/api/v1/$path" "${args[@]}"
 }
 
+prowlarr_session() { # 自铸核心会话：网关认出用户才转发 sso:none 应用的请求。e2e 的 extra_check 和
+  # 升级保数据的 data_write 都跑在套件 web_login 之前，jar 里还没有核心会话，先用主人令牌换一个
+  # （同 qbittorrent 探针的 qbit_session；来源白名单只免主人的浏览器，不免这里的程序化请求）。
+  local web jar token base
+  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  web="${web%/}"
+  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  token="${E2E_TOKEN:-${SMOKE_TOKEN:-}}"
+  base="${E2E_BASE:-${SMOKE_BASE:-}}"
+  [[ -n "$token" && -n "$base" ]] || { echo "没有核心登录变量，铸不了核心会话"; return 1; }
+  curl -sS --noproxy '*' -o /dev/null -c "$jar" \
+    --data-urlencode "token=$token" "$base/_wonton/login" ||
+    { echo "主人令牌登录不了核心"; return 1; }
+  # 第二步：跟首页跳转，让网关给这个应用子域名发会话 Cookie（只铸核心会话不够）。
+  curl -fsS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" \
+    -H 'Accept: text/html' "$web/" ||
+    { echo "应用网页会话没建立"; return 1; }
+}
+
 prowlarr_api_ready() { # 等 API 就绪，就绪后把 GET /indexer 的结果打到标准输出
   local out
+  prowlarr_session || return 1
   for _ in $(seq 1 20); do
     if out="$(prowlarr_api GET indexer)"; then
       printf '%s' "$out"
@@ -153,4 +173,54 @@ data_check() { # 升级/重装后：标记里的索引器还在，还是登记�
   jq -e --arg i "$marker_impl" '.implementation == $i and .enable == true' <<<"$item" >/dev/null ||
     { echo "索引器被改动：$item"; return 1; }
   echo "索引器 $marker_name 还在（$(jq -r '.implementation' <<<"$item")）"
+}
+
+# ---------- 发信（notify，规范 0.11）----------
+pw_core() { # 核心容器：通知房记录、Matrix 令牌和 Tuwunel 都在它的数据目录/网络上
+	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
+}
+
+pw_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 probes_setting）
+	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
+}
+
+pw_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
+	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
+	# 测试信没有随机的标记，文字用插件前缀；冒烟里 extra_check 是唯一发信方，开始后出现即可认。
+	local core dd pdir
+	core="$(pw_core)" || return 1
+	dd="$(pw_dd)"
+	pdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# shellcheck disable=SC2016 # 单引号里是子进程 bash 的变量，$1/$2/$3 是 bash -c 的位置参数
+	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
+		bash -c 'date() { [[ "${1:-}" == "+%s" ]] && command date -d "@$(( $(command date +%s) - 300 ))" +%s || command date "\$@"; }; source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
+		_ "$pdir" "$1" "$2"
+}
+
+extra_check() { # 发信端到端：应用的「测试」接口真发一封通知信（装插件时 mail 已建好 Wonton 连接），
+	# 核心把它投进主人的「Wonton」私聊（直接读通知房的消息，投递的最终证据）。
+	local list conn resp to wp
+	to="${SMOKE_OWNER:-owner}@wonton.internal"
+	prowlarr_session || return 1
+	# 插件的一次性 mail 服务建好的 "Wonton" Email 通知连接还在：没有它就没有发信通路。
+	# 提取通知连接（应用冷启动的头几秒 API 可能先 401，照 data_write 的就绪模式重试）。
+	local tries
+	for tries in 1 2 3 4 5; do
+		list="$(prowlarr_api GET notification)" && break
+		[[ "$tries" == 5 ]] && { echo "读通知连接失败：$(head -c 200 <<<"$list")"; return 1; }
+		sleep 3
+	done
+	conn="$(jq -c '[.[] | select(.implementation == "Email")][0] // empty' <<<"$list")"
+	[[ -n "$conn" && "$conn" != null ]] || { echo "通知连接里没有 Email 实现（插件的 mail 服务没建好？）"; return 1; }
+	jq -e --arg h "smtp.wonton.internal" '[.fields[] | select(.name == "server")][0].value == $h' \
+		<<<"$conn" >/dev/null 2>&1 ||
+		echo "（提示）Email 连接的 server 不是 smtp.wonton.internal：$(jq -c '[.fields[] | select(.name == "server" or .name == "to")]' <<<"$conn")"
+	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
+	pw_room_wait 120 "Prowlarr：" & wp=$!
+	# 触发一封真实测试信：应用用它自己配好的 SMTP（内部邮箱）发给收件人。
+	resp="$(prowlarr_api POST notification/test "$conn")" ||
+		{ kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "测试信请求失败：$(head -c 200 <<<"$resp")"; return 1; }
+	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
+	wait "$wp" || { echo "测试信 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
+	echo "测试信已进主人的 Wonton 私聊（Prowlarr：…，收件人 $to）"
 }
