@@ -1,6 +1,6 @@
 # 云吞插件：Prowlarr
 
-开发流程见[插件开发指南](https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md)。
+开发流程见[插件开发指南](https://github.com/wontonapp/wonton-docs/blob/main/develop.md)。
 
 云吞（Wonton）的 Prowlarr 插件：把影视索引器集中到一处管理，测连通性、自动同步给 Radarr、Sonarr 这类应用，也能直接搜索并把种子抓进下载队列。
 
