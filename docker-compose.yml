@@ -73,10 +73,10 @@ x-wonton:
   id: com.prowlarr.prowlarr
   version: 0.2.0
   kind: app
-  title: { en: Prowlarr }
+  title: { zh: 资源站管理（Prowlarr）, en: Torrent Site Manager (Prowlarr) }
   description:
-    zh: 统一管理影视索引器，一处搜索，同步给下载应用
-    en: Manage all your torrent indexers in one place and sync them to your download apps
+    zh: 把你常去找资源的下载网站集中管好：添加一次，自动同步给 Radarr、Sonarr、qBittorrent 这些下载应用，也能在这里直接搜、送去下载。偏进阶，装了自动追剧工具才用得上。
+    en: "Keeps the download sites you search in one place: add them once and they sync to download apps like Radarr, Sonarr and qBittorrent, or search and send things to download right here. For advanced setups with automatic movie and TV downloaders."
   icon: icon.svg
   notices: [NOTICE]
   screenshots: [screenshots/indexers.png, screenshots/add-indexer.png, screenshots/search.png]
@@ -89,11 +89,11 @@ x-wonton:
     en: [Downloads, Video, Search]
   about:
     zh: |
-      Prowlarr 把你的索引站集中到一处：从内置的几百个定义里添加索引器，测连通性，自动同步给 Radarr、Sonarr、qBittorrent 这类应用，也能直接搜索、把种子抓进下载队列。
+      Prowlarr 把你找资源的网站集中到一处：从内置的几百个网站里添加，测能不能连上，自动同步给 Radarr、Sonarr、qBittorrent 这类应用，也能直接搜索、把种子送进下载队列。
 
       第一次打开时应用会要求设置管理员账号和密码（自己定，之后在应用的 设置 → 通用 → 安全 里改）；网页始终在云吞网关的登录后面。索引器和设置都保存在家里，重装不丢。搜索索引站需要能访问外网；配了 qBittorrent 插件后，抓取会直接进它的下载队列。应用的通知（健康问题、健康恢复、应用更新）出现在收件人的 Wonton 私聊里；收件人只能是家里人，改成外部邮箱会发送失败。
     en: |
-      Prowlarr keeps your index sites in one place: add indexers from a few hundred built-in definitions, test them, sync them to Radarr, Sonarr or qBittorrent, and search and grab torrents straight into your download queue.
+      Prowlarr keeps the sites you search for downloads in one place: add them from a few hundred built-in definitions, test them, sync them to apps like Radarr, Sonarr or qBittorrent, and search and send torrents straight to your download queue.
 
       On first open the app asks you to set an admin username and password (your choice, change later under Settings → General → Security); the web stays behind the Wonton gateway login. Indexers and settings live at home and survive reinstalls. Searching index sites needs internet access. With the qBittorrent plugin installed, grabs go straight into its download queue. App notifications (health issues, health restored, app updates) land in the recipient's Wonton chat; recipients must be household members — sending to an external address fails.
   release_notes:
