@@ -25,7 +25,7 @@ services:
     stop_grace_period: 30s
 
   # 一次性服务：把 torrent_client 能力（qBittorrent Web API）登记成 Prowlarr 的下载客户端。
-  # 能力核心还没合入：WONTON_TORRENT_CLIENT_URL 没注入时如实说明并跳过，装得上、其他功能照常；
+  # 核心不支持能力依赖时不注入 WONTON_TORRENT_CLIENT_URL：没注入就如实说明并跳过，装得上、其他功能照常；
   # 等能力声明字段定稿后这里改成必填。
   provision:
     image: linuxserver/prowlarr:2.7.0@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf
